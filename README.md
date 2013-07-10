@@ -1,12 +1,18 @@
 SolrRabbitMQConsumer
 ====================
 
-Custom request handler for SOLR for consuming documents from RabbitMQ.
+Custom request handler for Apache SOLR for consuming documents from RabbitMQ.
 
-Consumes XML documents from RabbitMQ and add to local index core.
+Consumes XML documents from RabbitMQ and adds to local index core.
 
-In solrconfig.xml:
+Solr Configuration
+------------------
 
+* Add SolrRabbitMQConsumer.jar and required RabbitMQ dependencies inside /lib folder for your Solr instance.
+* Add custom request handler configuration to solrconfig.xml: 
+
+
+```xml
 <requestHandler name="solrRabbitMQConsumer" class="SolrRabbitMQConsumer">
   <lst name="queueConfig">
     <!-- Name of queue to consume documents from -->
@@ -15,3 +21,17 @@ In solrconfig.xml:
     <str name="queueURI">amqp://solr:solr@127.0.0.1:5672/solr</str>
   </lst>
 </requestHandler>
+```
+
+Document format
+---------------
+
+Currently, due to supporting a legacy (non-SOLR) indexing system, XML documents must be in the following format:
+
+```xml
+<doc>
+  <f n="fieldname"><v>field value</v></f>
+  <f n="fieldname"><v>field value</v></f>
+  ...
+</doc>
+```
