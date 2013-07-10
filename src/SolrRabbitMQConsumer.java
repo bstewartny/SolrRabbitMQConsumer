@@ -40,8 +40,22 @@ import org.w3c.dom.NodeList;
 public class SolrRabbitMQConsumer implements SolrRequestHandler,SolrCoreAware
 {
     RabbitMQDocumentConsumerTask worker=null;
-    public String queueName="solr"; 
-    public String queueURI="amqp://solr:solr@localhost:5672/solr";
+    String queueName="solr"; 
+    String queueURI="amqp://solr:solr@localhost:5672/solr";
+    
+    public SolrRabbitMQConsumer()
+    {
+    }
+     
+    @Override
+    public void init(NamedList nl) {
+        NamedList queueConfig=(NamedList)nl.get("queueConfig");
+        if(queueConfig!=null)
+        {
+            queueName=(String)queueConfig.get("queueName");
+            queueURI=(String)queueConfig.get("queueURI");
+        }
+    }
     
     @Override
     public void inform(SolrCore sc) {
@@ -239,20 +253,7 @@ public class SolrRabbitMQConsumer implements SolrRequestHandler,SolrCoreAware
         }
     }
     
-    public SolrRabbitMQConsumer()
-    {
-    }
-     
-    @Override
-    public void init(NamedList nl) {
-        NamedList queueConfig=(NamedList)nl.get("queueConfig");
-        if(queueConfig!=null)
-        {
-            this.queueName=(String)queueConfig.get("queueName");
-            this.queueURI=(String)queueConfig.get("queueURI");
-        }
-    }
- 
+    
     @Override
     public void handleRequest(SolrQueryRequest sqr, SolrQueryResponse sqr1) {
     
@@ -260,7 +261,7 @@ public class SolrRabbitMQConsumer implements SolrRequestHandler,SolrCoreAware
 
     @Override
     public String getName() {
-        return "QueueIndexer";
+        return "SolrRabbitMQConsumer";
     }
 
     @Override
@@ -270,7 +271,7 @@ public class SolrRabbitMQConsumer implements SolrRequestHandler,SolrCoreAware
 
     @Override
     public String getDescription() {
-        return "QueueIndexer";
+        return "SolrRabbitMQConsumer";
     }
 
     @Override
@@ -280,7 +281,7 @@ public class SolrRabbitMQConsumer implements SolrRequestHandler,SolrCoreAware
 
     @Override
     public String getSource() {
-        return "QueueIndexer";
+        return "SolrRabbitMQConsumer";
     }
 
     @Override
