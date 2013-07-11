@@ -23,6 +23,7 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.StringWriter;
 import java.util.Iterator;
+import java.util.Set;
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.transform.OutputKeys;
@@ -33,6 +34,8 @@ import javax.xml.transform.stream.StreamResult;
 import org.apache.solr.client.solrj.SolrServerException;
 import org.apache.solr.client.solrj.impl.CloudSolrServer;
 import org.apache.solr.cloud.CloudDescriptor;
+import org.apache.solr.common.cloud.ClusterState;
+import org.apache.solr.common.cloud.ZkStateReader;
 import org.apache.solr.common.params.SolrParams;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
@@ -48,12 +51,15 @@ public class SolrRabbitMQConsumer implements SolrRequestHandler,SolrCoreAware
     String queueName="solr"; 
     String queueURI="amqp://solr:solr@localhost:5672/solr";
     
+    
     public SolrRabbitMQConsumer()
     {
+       
     }
      
     @Override
     public void init(NamedList nl) {
+        System.out.println("SolrRabbitMQConsumer::init");
         NamedList queueConfig=(NamedList)nl.get("queueConfig");
         if(queueConfig!=null)
         {
@@ -64,6 +70,7 @@ public class SolrRabbitMQConsumer implements SolrRequestHandler,SolrCoreAware
     
     @Override
     public void inform(SolrCore sc) {
+        System.out.println("SolrRabbitMQConsumer::inform");
         if(worker==null)
         {
             worker=new RabbitMQDocumentConsumerTask(queueURI,queueName,sc);
@@ -85,6 +92,7 @@ public class SolrRabbitMQConsumer implements SolrRequestHandler,SolrCoreAware
         public RabbitMQDocumentConsumerTask(String queueURI,String queueName,SolrCore core)
         {
             this.core=core;
+            
             this.queueURI=queueURI;
             this.queueName=queueName;
         }
@@ -206,6 +214,7 @@ public class SolrRabbitMQConsumer implements SolrRequestHandler,SolrCoreAware
         
         private void printParams(SolrParams params)
         {
+            System.out.println("printParams");
             if(params!=null)
             {
                 Iterator<String> it=params.getParameterNamesIterator();
@@ -229,26 +238,30 @@ public class SolrRabbitMQConsumer implements SolrRequestHandler,SolrCoreAware
             
             if(cloud!=null)
             {
-                System.out.println("has CloudDescriptor");
-                System.out.println("getCollectionName"+cloud.getCollectionName());
-                System.out.println("getNumShards"+cloud.getNumShards());
-                System.out.println("getShardId"+cloud.getShardId());
-                System.out.println("isLeader"+cloud.isLeader());
+                System.out.println("core has CloudDescriptor=");
+                System.out.println("getCollectionName="+cloud.getCollectionName());
+                System.out.println("getNumShards="+cloud.getNumShards());
+                System.out.println("getShardId="+cloud.getShardId());
+                System.out.println("isLeader="+cloud.isLeader());
                 
                 SolrParams params=cloud.getParams();
                 printParams(params);
                 
-                return cloud.getNumShards()>0;
+                return true;
+                //return cloud.getNumShards()>0;
                 
             }
             else
             {
+                System.out.println("No CloudDescriptor found...");
                 return false;
             }
         }
         
         private void addDocumentToCloud(SolrInputDocument doc) throws SolrServerException,IOException
         {
+            System.out.println("addDocumentToCloud");
+            
             
              cloudServer.add(doc);
         
@@ -256,6 +269,7 @@ public class SolrRabbitMQConsumer implements SolrRequestHandler,SolrCoreAware
         
         private void addDocumentToCore(SolrInputDocument doc)
         {
+            System.out.println("addDocumentToCore");
             LocalSolrQueryRequest req=new LocalSolrQueryRequest(core,new HashMap<String,String[]>());
 
             AddUpdateCommand cmd = new AddUpdateCommand(req);
@@ -272,7 +286,7 @@ public class SolrRabbitMQConsumer implements SolrRequestHandler,SolrCoreAware
         
         private String getZookeeperHost()
         {
-            return null; // TODO
+            return "127.0.0.1:9983"; // TODO
         }
         
         private boolean createCloudServerClient()
@@ -285,6 +299,7 @@ public class SolrRabbitMQConsumer implements SolrRequestHandler,SolrCoreAware
             try
             {
                 cloudServer=new CloudSolrServer(zkHost);
+                cloudServer.setDefaultCollection(core.getName());
                 
                 return true;
             }
@@ -299,13 +314,77 @@ public class SolrRabbitMQConsumer implements SolrRequestHandler,SolrCoreAware
         @Override
         public void run()
         {
+            System.out.println("run");
             if(createConsumer())
             {
+                boolean isSolrCloud=isSolrCloud();
                 if(isSolrCloud())
                 {
+                    System.out.println("Running SOLR cloud...");
                     if(!createCloudServerClient())
                     {
+                        System.out.println("Failed to create cloud server client");
                         return;
+                    }
+                    else
+                    {
+                        // we need to make sure cluster is fully up before we start adding documents
+                        // AFAIK, there is no good trigger to know when it is availabie
+                        // We can try to sleep for default zk timeout, and then try again to connect to cluster...
+                        cloudServer.connect();
+                        
+                        while(!this.isInterrupted())
+                        {
+                           System.out.println("Check for live nodes in the cluster...");
+                            try
+                            {
+                                try
+                                {
+                                    ZkStateReader zkReader=cloudServer.getZkStateReader();
+                                    if(zkReader!=null)
+                                    {
+                                        ClusterState clusterState=zkReader.getClusterState();
+                                        if(clusterState!=null)
+                                        {
+                                            
+                                       
+
+                                            Set<String> liveNodes=clusterState.getLiveNodes();
+                                            if(liveNodes!=null && liveNodes.size()>0)
+                                            {
+                                                System.out.println("We see "+liveNodes.size()+" live nodes...");
+                                                break;
+                                            }
+                                            else
+                                            {
+                                                System.out.println("No live nodes found");
+                                                
+
+
+                                            } 
+                                        }
+                                        else
+                                        {
+                                            System.out.println("No cluster state found");
+                                        }
+                                    }
+                                    else
+                                    {
+                                        System.out.println("Failed to get zkStateReader");
+                                    }
+                                    Thread.sleep(1000);
+                                }
+                                catch(Exception e)
+                                {
+                                    e.printStackTrace();
+                                    Thread.sleep(1000);
+                                }
+                            }
+                            catch(InterruptedException e)
+                            {
+                                break;
+                            }
+                        }
                     }
                 }
                 
@@ -316,7 +395,7 @@ public class SolrRabbitMQConsumer implements SolrRequestHandler,SolrCoreAware
                         Document doc=nextDocument();
                         if(doc!=null)
                         {
-                            if(isSolrCloud())
+                            if(isSolrCloud)
                             {
                                 addDocumentToCloud(transformXmlDocToSolrDoc(doc));
                             }
