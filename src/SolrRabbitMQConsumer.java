@@ -22,6 +22,7 @@ import com.rabbitmq.client.QueueingConsumer;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.StringWriter;
+import java.util.Iterator;
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.transform.OutputKeys;
@@ -29,6 +30,10 @@ import javax.xml.transform.Transformer;
 import javax.xml.transform.TransformerFactory;
 import javax.xml.transform.dom.DOMSource;
 import javax.xml.transform.stream.StreamResult;
+import org.apache.solr.client.solrj.SolrServerException;
+import org.apache.solr.client.solrj.impl.CloudSolrServer;
+import org.apache.solr.cloud.CloudDescriptor;
+import org.apache.solr.common.params.SolrParams;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.NodeList;
@@ -74,6 +79,8 @@ public class SolrRabbitMQConsumer implements SolrRequestHandler,SolrCoreAware
         SolrCore core;
         String queueName;
         String queueURI;
+        CloudSolrServer cloudServer=null;
+        
         
         public RabbitMQDocumentConsumerTask(String queueURI,String queueName,SolrCore core)
         {
@@ -197,6 +204,56 @@ public class SolrRabbitMQConsumer implements SolrRequestHandler,SolrCoreAware
             return solrDoc;
         }
         
+        private void printParams(SolrParams params)
+        {
+            if(params!=null)
+            {
+                Iterator<String> it=params.getParameterNamesIterator();
+                while(it.hasNext())
+                {
+                    String name=it.next();
+                    String value=params.get(name);
+                    System.out.println(name+"="+value);
+                }
+            }
+        }
+        
+        private boolean isSolrCloud()
+        {
+            if(cloudServer!=null)
+            {
+                return true;    
+            }
+            
+            CloudDescriptor cloud=core.getCoreDescriptor().getCloudDescriptor();
+            
+            if(cloud!=null)
+            {
+                System.out.println("has CloudDescriptor");
+                System.out.println("getCollectionName"+cloud.getCollectionName());
+                System.out.println("getNumShards"+cloud.getNumShards());
+                System.out.println("getShardId"+cloud.getShardId());
+                System.out.println("isLeader"+cloud.isLeader());
+                
+                SolrParams params=cloud.getParams();
+                printParams(params);
+                
+                return cloud.getNumShards()>0;
+                
+            }
+            else
+            {
+                return false;
+            }
+        }
+        
+        private void addDocumentToCloud(SolrInputDocument doc) throws SolrServerException,IOException
+        {
+            
+             cloudServer.add(doc);
+        
+        }
+        
         private void addDocumentToCore(SolrInputDocument doc)
         {
             LocalSolrQueryRequest req=new LocalSolrQueryRequest(core,new HashMap<String,String[]>());
@@ -213,11 +270,45 @@ public class SolrRabbitMQConsumer implements SolrRequestHandler,SolrCoreAware
             }
         }
         
+        private String getZookeeperHost()
+        {
+            return null; // TODO
+        }
+        
+        private boolean createCloudServerClient()
+        {
+            String zkHost=getZookeeperHost();
+            if(zkHost==null)
+            {
+                return false;
+            }
+            try
+            {
+                cloudServer=new CloudSolrServer(zkHost);
+                
+                return true;
+            }
+            catch(Exception e)
+            {
+                e.printStackTrace();
+                return false;
+            }
+        
+        }
+        
         @Override
         public void run()
         {
             if(createConsumer())
             {
+                if(isSolrCloud())
+                {
+                    if(!createCloudServerClient())
+                    {
+                        return;
+                    }
+                }
+                
                 while(!this.isInterrupted())
                 {
                     try
@@ -225,7 +316,14 @@ public class SolrRabbitMQConsumer implements SolrRequestHandler,SolrCoreAware
                         Document doc=nextDocument();
                         if(doc!=null)
                         {
-                            addDocumentToCore(transformXmlDocToSolrDoc(doc));
+                            if(isSolrCloud())
+                            {
+                                addDocumentToCloud(transformXmlDocToSolrDoc(doc));
+                            }
+                            else
+                            {
+                                addDocumentToCore(transformXmlDocToSolrDoc(doc));
+                            }
                         }
                         else
                         {   
